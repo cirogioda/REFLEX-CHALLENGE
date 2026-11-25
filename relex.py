@@ -63,7 +63,6 @@ class ReflexChallengeApp:
         self.root.after(40, self.procesar_mensajes)
 
     def construir_interfaz(self):
-        # Barra superior compacta
         header = tk.Frame(self.root, bg=BG_PANEL, height=54, highlightbackground=BORDE_PANEL, highlightthickness=1)
         header.pack(fill="x", padx=12, pady=(10, 6))
         header.pack_propagate(False)
@@ -130,7 +129,6 @@ class ReflexChallengeApp:
         )
         self.lbl_estado_conexion.pack(side="left", padx=6)
 
-        # Contenedor Principal
         contenedor = tk.Frame(self.root, bg=BG_FONDO)
         contenedor.pack(fill="both", expand=True, padx=12, pady=6)
         contenedor.columnconfigure(0, weight=3, uniform="grupo")
@@ -165,7 +163,6 @@ class ReflexChallengeApp:
         self.canvas_led.create_oval(4, 4, 101, 101, outline=BORDE_PANEL, width=2)
         self.led_circulo = self.canvas_led.create_oval(12, 12, 93, 93, fill=COLOR_AMARILLO, outline="")
 
-        # Tira de 5 rondas compacta
         frame_rondas = tk.Frame(panel_juego, bg=BG_PANEL)
         frame_rondas.pack(pady=10)
 
@@ -181,7 +178,6 @@ class ReflexChallengeApp:
 
             self.tarjetas_ronda.append((tarjeta, lbl_val))
 
-        # Métricas
         frame_stats = tk.Frame(panel_juego, bg=BG_TARJETA, pady=10)
         frame_stats.pack(fill="x", padx=15, pady=8)
 
@@ -195,7 +191,6 @@ class ReflexChallengeApp:
         self.lbl_record = tk.Label(frame_stats, text=texto_rec, font=("Arial", 11, "bold"), bg=BG_TARJETA, fg=COLOR_VERDE)
         self.lbl_record.pack(side="left", expand=True)
 
-        # Controles de Jugador
         frame_controles = tk.Frame(panel_juego, bg=BG_PANEL)
         frame_controles.pack(pady=(12, 15))
 
@@ -276,7 +271,6 @@ class ReflexChallengeApp:
 
     def actualizar_lista_puertos(self):
         puertos = [p.device for p in serial.tools.list_ports.comports()]
-        # Respaldo directo en Linux por si pyserial no los lista
         for extra in glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"):
             if extra not in puertos:
                 puertos.append(extra)
@@ -338,7 +332,9 @@ class ReflexChallengeApp:
 
     def enviar_comando(self, cmd):
         if self.modo_simulacion.get():
-            if cmd == "S":
+            if cmd == "P":
+                self.iniciar_largada_simulada(1)
+            elif cmd == "S":
                 self.iniciar_ronda_simulada()
             return True
 
@@ -365,6 +361,21 @@ class ReflexChallengeApp:
                 self.lbl_estado_conexion.config(text=f"● {self.arduino.port}", fg=COLOR_VERDE)
             else:
                 self.lbl_estado_conexion.config(text="● DESCONECTADO", fg=COLOR_ROJO)
+
+    def iniciar_largada_simulada(self, paso):
+        if self.estado != "largada":
+            return
+        if paso <= 3:
+            self.cola_serial.put(f"PARPADEO:{paso}")
+            self.sim_timer_id = self.root.after(400, lambda: self.apagar_largada_simulada(paso))
+        else:
+            self.iniciar_ronda_simulada()
+
+    def apagar_largada_simulada(self, paso):
+        if self.estado != "largada":
+            return
+        self.cola_serial.put("PARPADEO_OFF")
+        self.sim_timer_id = self.root.after(400, lambda: self.iniciar_largada_simulada(paso + 1))
 
     def iniciar_ronda_simulada(self):
         self.cola_serial.put("ESPERANDO")
@@ -394,7 +405,16 @@ class ReflexChallengeApp:
             while True:
                 linea = self.cola_serial.get_nowait()
 
-                if linea == "ESPERANDO":
+                if linea.startswith("PARPADEO:"):
+                    num = linea.split(":")[1]
+                    self.estado = "largada"
+                    self.canvas_led.itemconfig(self.led_circulo, fill=COLOR_ROJO)
+                    self.banner_estado.config(text=f"ATENTO... SEÑAL {num} / 3", bg=COLOR_ROJO, fg="white")
+
+                elif linea == "PARPADEO_OFF":
+                    self.canvas_led.itemconfig(self.led_circulo, fill=BG_TARJETA)
+
+                elif linea == "ESPERANDO":
                     self.estado = "esperando"
                     self.canvas_led.itemconfig(self.led_circulo, fill=COLOR_AMARILLO)
                     self.banner_estado.config(text="ESPERÁ A QUE EL LED SE PONGA VERDE...", bg=COLOR_AMARILLO, fg="#111827")
@@ -465,15 +485,20 @@ class ReflexChallengeApp:
                 self.preparar_nuevo_jugador()
 
     def comenzar_ronda(self):
-        if not self.enviar_comando("S"):
+        comando = "P" if self.ronda == 1 else "S"
+        if not self.enviar_comando(comando):
             return
 
-        self.estado = "esperando"
+        self.estado = "largada" if self.ronda == 1 else "esperando"
         self.btn_principal.config(text="ESPERANDO...", state="disabled", bg=BG_TARJETA)
         self.lbl_tiempo.config(text="0.000 s", fg=TEXTO_BLANCO)
         self.lbl_ronda.config(text=f"Ronda: {self.ronda} / {TOTAL_RONDAS}")
-        self.canvas_led.itemconfig(self.led_circulo, fill=COLOR_AMARILLO)
-        self.banner_estado.config(text="PREPARADO... ESPERÁ LA SEÑAL VERDE", bg=COLOR_AMARILLO, fg="#111827")
+        if self.ronda == 1:
+            self.canvas_led.itemconfig(self.led_circulo, fill=BG_TARJETA)
+            self.banner_estado.config(text="LARGADA EN 3 PARPADEOS...", bg=BG_TARJETA, fg=TEXTO_BLANCO)
+        else:
+            self.canvas_led.itemconfig(self.led_circulo, fill=COLOR_AMARILLO)
+            self.banner_estado.config(text="PREPARADO... ESPERÁ LA SEÑAL VERDE", bg=COLOR_AMARILLO, fg="#111827")
 
     def registrar_tiempo(self, ms):
         segundos = ms / 1000.0
@@ -627,6 +652,10 @@ class ReflexChallengeApp:
         self.root.destroy()
 
 
+if __name__ == "__main__":
+    ventana = tk.Tk()
+    app = ReflexChallengeApp(ventana)
+    ventana.mainloop()
 if __name__ == "__main__":
     ventana = tk.Tk()
     app = ReflexChallengeApp(ventana)
